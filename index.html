@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 交易闭环系统 (多周期策略版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #0f172a; color: #f1f5f9; font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .tab-active { background-color: #2563eb; color: white; border-color: #3b82f6; }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+    <header class="h-16 border-b border-slate-700 bg-slate-900 flex items-center justify-between px-6 shrink-0 z-20">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded bg-blue-600 flex items-center justify-center text-white font-bold">AI</div>
+            <div class="flex flex-col">
+                <h1 class="font-bold text-lg leading-tight">A股预测师</h1>
+                <div id="realTimeClock" class="text-[10px] text-blue-400 font-mono">载入时间中...</div>
+            </div>
+        </div>
+        <div class="flex items-center gap-4">
+            <div id="marketStatus" class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700">检测市场时段...</div>
+            <div class="flex items-center gap-2 bg-slate-800 rounded px-3 py-1">
+                <i class="fa-solid fa-key text-yellow-500 text-xs"></i>
+                <input type="password" id="apiKeyInput" placeholder="输入 API Key" class="bg-transparent border-none outline-none text-sm w-40 text-white placeholder-slate-500">
+            </div>
+        </div>
+    </header>
+
+    <div class="flex-1 flex overflow-hidden">
+        
+        <main class="flex-1 flex flex-col p-6 gap-6 overflow-y-auto scrollbar-hide">
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="glass rounded-xl p-6">
+                    <h2 class="text-xl font-bold mb-2 text-blue-400">1. 联网预测 (10次集成)</h2>
+                    
+                    <div class="flex gap-2 mb-4 p-1 bg-slate-800 rounded-lg w-fit">
+                        <button onclick="setPeriod('day')" id="p-day" class="period-btn px-3 py-1 text-xs rounded-md border border-transparent transition tab-active">当日</button>
+                        <button onclick="setPeriod('week')" id="p-week" class="period-btn px-3 py-1 text-xs rounded-md border border-transparent transition text-slate-400">一周</button>
+                        <button onclick="setPeriod('month')" id="p-month" class="period-btn px-3 py-1 text-xs rounded-md border border-transparent transition text-slate-400">一月</button>
+                        <button onclick="setPeriod('halfyear')" id="p-halfyear" class="period-btn px-3 py-1 text-xs rounded-md border border-transparent transition text-slate-400">半年</button>
+                    </div>
+
+                    <p id="predictTargetDesc" class="text-sm text-slate-400 mb-4">正在计算预测目标...</p>
+                    <div id="newsDisplay" class="text-xs text-slate-300 mb-4 h-10 overflow-hidden">等待联网...</div>
+                    <button id="btnPredict" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded">启动预测</button>
+                </div>
+
+                <div class="glass rounded-xl p-6">
+                    <div class="flex justify-between items-start mb-2">
+                        <h2 class="text-xl font-bold text-green-400">2. 收盘复盘</h2>
+                        <button id="btnAutoFetch" class="text-[10px] bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded transition">
+                            <i class="fa-solid fa-cloud-download mr-1"></i>自动获取今日收盘
+                        </button>
+                    </div>
+                    <p class="text-sm text-slate-400 mb-4">输入真实结果 -> 强化权重</p>
+                    <div class="flex gap-2 mb-4">
+                        <input type="number" id="realClose" placeholder="收盘价/点位" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm w-full text-white">
+                        <input type="number" id="realChange" placeholder="涨跌幅%" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm w-full text-white">
+                    </div>
+                    <button id="btnReview" disabled class="w-full bg-slate-700 text-slate-400 font-bold py-2 rounded cursor-not-allowed">执行复盘</button>
+                </div>
+            </div>
+
+            <div class="glass rounded-xl p-6 flex-1 min-h-[300px] flex flex-col">
+                <h3 class="font-bold mb-4">历史准确率曲线</h3>
+                <div class="relative w-full h-full">
+                    <canvas id="historyChart"></canvas>
+                </div>
+            </div>
+        </main>
+
+        <aside class="w-80 bg-slate-900 border-l border-slate-700 flex flex-col shrink-0">
+            <div class="p-4 border-b border-slate-700 font-bold text-sm text-slate-400">系统日志</div>
+            <div id="logContainer" class="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2"></div>
+            <div class="p-4 border-t border-slate-700 bg-slate-800">
+                <div class="text-xs text-slate-400 mb-1">当前模型权重</div>
+                <div id="weightDisplay" class="text-2xl font-bold text-white">1.000</div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const CONFIG = {
+            apiRawEndpoint: 'https://api.siliconflow.cn/v1/chat/completions',
+            model: 'Qwen/Qwen2.5-7B-Instruct',
+            storageKey: 'ai_trading_history_v2',
+            marketDataApi: 'https://qt.gtimg.cn/q=s_sh000001'
+        };
+
+        const $ = id => document.getElementById(id);
+        let currentPeriod = 'day';
+
+        // --- 实时功能 & 周期逻辑 ---
+        function setPeriod(period) {
+            currentPeriod = period;
+            document.querySelectorAll('.period-btn').forEach(btn => {
+                btn.classList.remove('tab-active', 'text-white');
+                btn.classList.add('text-slate-400');
+            });
+            $(`p-${period}`).classList.add('tab-active', 'text-white');
+            updateClock(); 
+        }
+
+        function updateClock() {
+            const now = new Date();
+            const timeStr = now.toLocaleString('zh-CN', { hour12: false });
+            $('realTimeClock').innerText = timeStr;
+
+            const hour = now.getHours();
+            const minute = now.getMinutes();
+            const totalMinutes = hour * 60 + minute;
+
+            let statusText = (totalMinutes < 570) ? "🔴 盘前" : (totalMinutes >= 900) ? "🔵 盘后" : "🟢 交易中";
+            $('marketStatus').innerText = statusText;
+
+            const periodNames = { day: '当日', week: '未来一周', month: '未来一月', halfyear: '未来半年' };
+            let targetLabel = periodNames[currentPeriod];
+            
+            // 针对当日的特殊时间逻辑
+            if(currentPeriod === 'day') {
+                targetLabel = totalMinutes < 570 ? "【今日】收盘" : totalMinutes >= 810 ? "【次日】走势" : "【即时】波动";
+            }
+            $('predictTargetDesc').innerText = `预测目标：${targetLabel}`;
+        }
+        setInterval(updateClock, 1000);
+
+        // --- 核心：多维度预测算法逻辑 ---
+        function getAlgorithmPrompt(news) {
+            const base = `参考数据：${news}\n当前周期：${currentPeriod}\n`;
+            const algos = {
+                day: `算法：[日内情绪量化]。请分析超短线资金流向、即时新闻冲击及盘面动量。`,
+                week: `算法：[波段趋势分析]。请结合本周重要宏观数据预告、行业周度景气度及技术面支撑压力。`,
+                month: `算法：[中期策略推演]。请分析本月政策导向、流动性预期（央行动向）及核心资产估值中枢。`,
+                halfyear: `算法：[宏观周期建模]。请分析产业生命周期、半年度财报预期及全球宏观博弈（汇率/利率周期）。`
+            };
+            return base + algos[currentPeriod] + `\n任务：严格仅输出“大涨、小涨、平、小跌、大跌”五个词中的一个。`;
+        }
+
+        // --- 自动获取数据 ---
+        $('btnAutoFetch').addEventListener('click', async () => {
+            const btn = $('btnAutoFetch');
+            btn.innerHTML = '...';
+            try {
+                const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(CONFIG.marketDataApi));
+                const parts = (await response.text()).split('~');
+                if (parts.length > 4) {
+                    $('realClose').value = parts[2];
+                    $('realChange').value = parts[4];
+                    log(`获取成功：${parts[4]}%`, 'success');
+                }
+            } catch (e) { log('获取失败', 'error'); }
+            btn.innerHTML = '<i class="fa-solid fa-cloud-download mr-1"></i>自动获取今日收盘';
+        });
+
+        // --- LLM 与 业务流 ---
+        const log = (msg, type='info') => {
+            const el = document.createElement('div');
+            el.innerHTML = `<span class="opacity-50">[${new Date().toLocaleTimeString()}] </span><span class="${type==='success'?'text-green-400':type==='error'?'text-red-400':''}">${msg}</span>`;
+            $('logContainer').appendChild(el);
+            $('logContainer').scrollTop = $('logContainer').scrollHeight;
+        };
+
+        async function callLLM(apiKey, prompt) {
+            const response = await fetch('https://corsproxy.io/?' + encodeURIComponent(CONFIG.apiRawEndpoint), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey.trim()}` },
+                body: JSON.stringify({
+                    model: CONFIG.model,
+                    messages: [{ role: "system", content: "你是一个专业的金融量化策略师。" }, { role: "user", content: prompt }],
+                    temperature: 0.7, max_tokens: 100
+                })
+            });
+            const data = await response.json();
+            return data.choices[0].message.content.trim();
+        }
+
+        $('btnPredict').addEventListener('click', async () => {
+            const apiKey = $('apiKeyInput').value;
+            if(!apiKey) return alert('请输入 API Key');
+            
+            $('btnPredict').disabled = true;
+            $('btnPredict').innerText = '多维算法计算中...';
+            
+            try {
+                const news = `市场波动：${$('marketStatus').innerText}，当前周期偏好：${currentPeriod}`;
+                $('newsDisplay').innerText = `正在应用${currentPeriod}算法分析实时数据...`;
+                
+                const options = ["大涨", "小涨", "平", "小跌", "大跌"];
+                const results = [];
+                for (let i = 0; i < 10; i++) {
+                    const res = await callLLM(apiKey, getAlgorithmPrompt(news));
+                    results.push(options.find(opt => res.includes(opt)) || "平");
+                }
+
+                const counts = {};
+                results.forEach(r => counts[r] = (counts[r] || 0) + 1);
+                const final = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+                
+                log(`[${currentPeriod}]预测：${final} (权重系数影响中)`, 'success');
+                window.currentPrediction = final;
+                $('btnReview').disabled = false;
+                $('btnReview').className = "w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 rounded";
+            } catch(e) { log('预测失败: ' + e.message, 'error'); }
+            finally { $('btnPredict').disabled = false; $('btnPredict').innerText = '启动预测'; }
+        });
+
+        $('btnReview').addEventListener('click', async () => {
+            const apiKey = $('apiKeyInput').value;
+            const change = $('realChange').value;
+            if(!change) return alert('请先获取真实数据');
+            
+            $('btnReview').innerText = '强化学习中...';
+            try {
+                let adjust = 0;
+                for (let i = 0; i < 5; i++) {
+                    const res = await callLLM(apiKey, `周期:${currentPeriod}, 预测:${window.currentPrediction}, 真实:${change}%。给出一个0.8-1.2的调整系数。仅输出数字。`);
+                    adjust += parseFloat(res.match(/\d+(\.\d+)?/)?.[0] || 1);
+                }
+                let history = JSON.parse(localStorage.getItem(CONFIG.storageKey) || '[]');
+                let curW = history.length > 0 ? history[history.length-1].newWeight : 1.0;
+                let newW = Math.max(0.1, Math.min(2.0, curW * (adjust/5)));
+
+                history.push({ date: new Date().toLocaleDateString(), isCorrect: (parseFloat(change) > 0 && window.currentPrediction.includes("涨")), newWeight: newW });
+                localStorage.setItem(CONFIG.storageKey, JSON.stringify(history));
+                
+                log(`复盘完成。新权重：${newW.toFixed(3)}`, 'success');
+                loadHistory();
+                $('btnReview').disabled = true;
+                $('btnReview').className = "w-full bg-slate-700 text-slate-400 font-bold py-2 rounded cursor-not-allowed";
+            } catch(e) { log('复盘失败', 'error'); }
+        });
+
+        // --- 图表逻辑 ---
+        let historyChart;
+        function loadHistory() {
+            const history = JSON.parse(localStorage.getItem(CONFIG.storageKey) || '[]');
+            const accuracy = history.map((d, i) => (history.slice(0, i+1).filter(x=>x.isCorrect).length / (i+1)).toFixed(2));
+            historyChart.data.labels = history.map(d => d.date);
+            historyChart.data.datasets[0].data = accuracy;
+            historyChart.update();
+            if(history.length > 0) $('weightDisplay').innerText = history[history.length-1].newWeight.toFixed(3);
+        }
+
+        window.onload = () => {
+            const ctx = $('historyChart').getContext('2d');
+            historyChart = new Chart(ctx, {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: '策略准确率', data: [], borderColor: '#10b981', tension: 0.3 }] },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+            updateClock();
+            loadHistory();
+        };
+    </script>
+</body>
+</html>
